@@ -1,0 +1,8 @@
+numpy
+matplotlib
+cartopy
+xarray
+rioxarray
+requests
+scipy
+rasterio
