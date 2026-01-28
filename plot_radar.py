@@ -5,19 +5,23 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import geopandas as gpd  # <--- NUOVO IMPORT
 import rioxarray
 from datetime import datetime
-import pytz # Per gestire fusi orari
+import pytz
 
 # --- CONFIGURAZIONE ---
 OUTDIR = "output"
 API_BASE = "https://radar-api.protezionecivile.it"
-TZ_ROME = pytz.timezone('Europe/Rome') # Fuso orario Italiano
+TZ_ROME = pytz.timezone('Europe/Rome')
 
-# Crea cartella output se non esiste
+# Costruiamo il path assoluto per sicurezza
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SHP_PATH = os.path.join(SCRIPT_DIR, "Reg01012025_g_WGS84.shp")
+
 os.makedirs(OUTDIR, exist_ok=True)
 
-# --- STILI E COLORI (INVARIATI) ---
+# --- STILI E COLORI ---
 colors_p = ["#ffffff","#bfe7f9","#7ed1f3","#00a6e6","#003f7b","#f4f89f","#e6ed3b",
             "#ffd800","#ff9500","#ff2f00","#b40a00","#840000","#dd007f"]
 boundaries_p = [0,0.1,0.5,1,3,5,7,10,15,20,30,40,50]
@@ -70,29 +74,46 @@ def download_product(product_type, epoch_ms, filename):
         print(f"[DL] Errore download {product_type}: {e}")
         return False
 
-# --- UTILITY DATA ---
+# --- UTILITY ---
 
 def get_formatted_filename(prefix, epoch_ms):
-    """Genera nome file con timestamp locale: RADAR_SRI_20260128_1345.webp"""
-    # Converti epoch UTC in datetime
     dt_utc = datetime.fromtimestamp(epoch_ms / 1000.0, pytz.utc)
-    # Converti in locale (Roma)
     dt_local = dt_utc.astimezone(TZ_ROME)
-    # Formatta stringa
     time_str = dt_local.strftime("%Y%m%d_%H%M")
     return f"{prefix}_{time_str}.webp", dt_local
 
-# --- PLOTTING ---
-
 def setup_map():
+    """Configura la mappa con Geopandas per lo shapefile"""
     fig = plt.figure(figsize=(10, 11))
     ax = plt.axes(projection=ccrs.PlateCarree())
     ax.set_extent([6, 19, 35, 47.5], crs=ccrs.PlateCarree())
-    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1, zorder=5)
-    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linestyle=':', linewidth=1, zorder=5)
-    gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.3, zorder=6)
+    
+    # 1. Confini Base (Costa e Stati) - ZORDER 20
+    ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1.0, zorder=20)
+    ax.add_feature(cfeature.BORDERS.with_scale('10m'), linestyle='-', linewidth=1.0, zorder=20)
+    
+    # 2. CARICAMENTO SHAPEFILE CON GEOPANDAS
+    print("🗺️ Caricamento shapefile...")
+    try:
+        # Legge il file, esplode i multipoligoni e converte in WGS84 (EPSG:4326)
+        reg_df = gpd.read_file(SHP_PATH).explode(index_parts=False).to_crs(epsg=4326)
+        regions_geom = reg_df.geometry
+        
+        # Aggiunge le geometrie alla mappa
+        # ZORDER=25 per stare SOPRA la pioggia (che ha zorder=10)
+        # Facecolor='none' per trasparenza interna
+        # Edgecolor='black' e Linewidth=1.2 per visibilità
+        ax.add_geometries(regions_geom, crs=ccrs.PlateCarree(),
+                          facecolor='none', edgecolor='black', linewidth=0.5, zorder=25)
+        print("✅ Shapefile caricato e aggiunto.")
+    except Exception as e:
+        print(f"❌ Errore caricamento shapefile: {e}")
+
+    # Griglia
+    gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.3, zorder=30)
     gl.top_labels = False
     gl.right_labels = False
+    
     return fig, ax
 
 def save_map_webp(filename):
@@ -100,46 +121,39 @@ def save_map_webp(filename):
     plt.close()
     print(f"[OUT] Mappa salvata: {filename}")
 
-def plot_sri_ir():
-    print("--- Elaborazione SRI + IR ---")
+# --- PLOTTING ---
+
+def plot_sri():
+    """Solo SRI (Precipitazione istantanea)"""
+    print("--- Elaborazione SRI ---")
     sri_time = get_last_product_time("SRI")
     if not sri_time: return
 
-    # Nome file dinamico basato sul tempo del dato
     fname, dt_local = get_formatted_filename(f"{OUTDIR}/RADAR_SRI", sri_time)
     
-    # Se il file esiste già, saltiamo (evita ri-elaborazione inutile)
     if os.path.exists(fname):
-        print(f"[SKIP] File {fname} già esistente.")
+        print(f"[SKIP] {fname} esiste.")
         return
 
-    ir_time = get_last_product_time("IR_108")
-    f_sri, f_ir = "temp_sri.tif", "temp_ir.tif"
-    
+    f_sri = "temp_sri.tif"
     if not download_product("SRI", sri_time, f_sri): return
-    has_ir = False
-    if ir_time: has_ir = download_product("IR_108", ir_time, f_ir)
 
     try:
         fig, ax = setup_map()
-
-        if has_ir:
-            da_ir = rioxarray.open_rasterio(f_ir, masked=True).squeeze()
-            crs_ir = ccrs.Projection(da_ir.rio.crs)
-            ax.pcolormesh(da_ir.x, da_ir.y, da_ir, transform=crs_ir, cmap='gray_r', alpha=0.6, zorder=1)
 
         da_sri = rioxarray.open_rasterio(f_sri, masked=True).squeeze()
         crs_sri = ccrs.Projection(da_sri.rio.crs)
         da_sri = da_sri.where(da_sri >= 0.1)
 
-        cf = ax.pcolormesh(da_sri.x, da_sri.y, da_sri, transform=crs_sri, cmap=cmap_p, norm=norm_p, zorder=10)
+        # ZORDER=10, ALPHA=0.75
+        cf = ax.pcolormesh(da_sri.x, da_sri.y, da_sri, transform=crs_sri,
+                           cmap=cmap_p, norm=norm_p, zorder=10, alpha=0.75)
 
         cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, extend='max')
         cbar.set_label("Precipitazione Istantanea (mm/h)")
         cbar.set_ticks(boundaries_p)
 
-        # Titolo con ora locale
-        plt.title(f"Radar SRI + Sat IR", loc='left', fontsize=12, fontweight='bold')
+        plt.title(f"Radar SRI (Istantanea)", loc='left', fontsize=12, fontweight='bold')
         plt.title(f"Valid: {dt_local.strftime('%d/%m/%Y %H:%M %Z')}", loc='right', fontsize=10)
 
         save_map_webp(fname)
@@ -148,9 +162,9 @@ def plot_sri_ir():
         print(f"Errore SRI: {e}")
     finally:
         if os.path.exists(f_sri): os.remove(f_sri)
-        if os.path.exists(f_ir): os.remove(f_ir)
 
 def plot_cum24():
+    """CUM 24H"""
     print("--- Elaborazione CUM 24H ---")
     cum_time = get_last_product_time("CUM24")
     if not cum_time: return
@@ -158,7 +172,7 @@ def plot_cum24():
     fname, dt_local = get_formatted_filename(f"{OUTDIR}/RADAR_CUM24", cum_time)
     
     if os.path.exists(fname):
-        print(f"[SKIP] File {fname} già esistente.")
+        print(f"[SKIP] {fname} esiste.")
         return
 
     f_cum = "temp_cum24.tif"
@@ -169,8 +183,9 @@ def plot_cum24():
         da_cum = rioxarray.open_rasterio(f_cum, masked=True).squeeze()
         da_cum = da_cum.where(da_cum >= 1)
 
+        # ZORDER=10, ALPHA=0.75
         cf = ax.pcolormesh(da_cum.x, da_cum.y, da_cum, transform=ccrs.PlateCarree(),
-                           cmap=cmap_p_cum, norm=norm_p_cum, zorder=10)
+                           cmap=cmap_p_cum, norm=norm_p_cum, zorder=10, alpha=0.75)
 
         cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, extend='max')
         cbar.set_label("Precipitazione 24h (mm)")
@@ -187,5 +202,5 @@ def plot_cum24():
         if os.path.exists(f_cum): os.remove(f_cum)
 
 if __name__ == "__main__":
-    plot_sri_ir()
+    plot_sri()
     plot_cum24()
