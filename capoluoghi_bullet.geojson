@@ -109,6 +109,11 @@
     },
     {
       "type": "Feature",
+      "properties": { "name": "Perugia", "code": "PG", "region": "Umbria" },
+      "geometry": { "type": "Point", "coordinates": [12.3895, 43.1065] }
+    },
+    {
+      "type": "Feature",
       "properties": { "name": "L'Aquila", "code": "AQ", "region": "Abruzzo" },
       "geometry": { "type": "Point", "coordinates": [13.3995, 42.3498] }
     }
