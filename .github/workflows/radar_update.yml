@@ -1,0 +1,46 @@
+name: Radar Maps to Drive
+
+on:
+  schedule:
+    - cron: '*/5 * * * *' # Esegue ogni 5 minuti
+  workflow_dispatch: # Permette avvio manuale
+
+jobs:
+  process-and-upload:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgdal-dev gdal-bin rclone
+
+      - name: Install Python Libraries
+        run: pip install -r requirements.txt
+
+      - name: Generate Radar Maps
+        run: python plot_radar.py
+
+      - name: Setup Rclone Config
+        run: |
+          # Crea il file di config partendo dal Secret
+          echo "${{ secrets.RCLONE_CONF }}" > rclone.conf
+          # Imposta permessi sicuri (lettura/scrittura solo per il proprietario)
+          chmod 600 rclone.conf
+
+      - name: Upload to Google Drive
+        env:
+          # Mappiamo il secret in una variabile d'ambiente interna allo step
+          DRIVE_ID: ${{ secrets.GDRIVE_FOLDER_ID }}
+        run: |
+          # 'copy' aggiunge solo i nuovi file, mantenendo lo storico
+          # Usiamo le virgolette "$DRIVE_ID" per sicurezza bash
+          rclone copy output/ gdrive: --drive-root-folder-id "$DRIVE_ID" --config rclone.conf --include "*.webp" -v
