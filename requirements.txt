@@ -8,3 +8,5 @@ scipy
 rasterio
 Pillow
 pytz
+geopandas
+shapely
