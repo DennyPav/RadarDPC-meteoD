@@ -149,12 +149,12 @@ def plot_sri():
         cf = ax.pcolormesh(da_sri.x, da_sri.y, da_sri, transform=crs_sri,
                            cmap=cmap_p, norm=norm_p, zorder=10, alpha=0.75)
 
-        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, extend='max')
+        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.04, aspect=30, extend='max', shrink=0.75)
         cbar.set_label("Precipitazione Istantanea (mm/h)")
         cbar.set_ticks(boundaries_p)
 
         plt.title(f"Radar SRI (Istantanea)", loc='left', fontsize=12, fontweight='bold')
-        plt.title(f"Valid: {dt_local.strftime('%d/%m/%Y %H:%M %Z')}", loc='right', fontsize=10)
+        plt.title(f"rete radar DPC - Valid: {dt_local.strftime('%d/%m/%Y %H:%M %Z')}", loc='right', fontsize=10)
 
         save_map_webp(fname)
 
@@ -187,12 +187,12 @@ def plot_cum24():
         cf = ax.pcolormesh(da_cum.x, da_cum.y, da_cum, transform=ccrs.PlateCarree(),
                            cmap=cmap_p_cum, norm=norm_p_cum, zorder=10, alpha=0.75)
 
-        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.05, aspect=30, extend='max')
+        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.04, aspect=30, extend='max', shrink=0.75)
         cbar.set_label("Precipitazione 24h (mm)")
         cbar.set_ticks(boundaries_p_cum)
 
         plt.title(f"Precipitazione Cumulata 24h", loc='left', fontsize=12, fontweight='bold')
-        plt.title(f"Valid: {dt_local.strftime('%d/%m/%Y %H:%M %Z')}", loc='right', fontsize=10)
+        plt.title(f"rete radar DPC - Valid: {dt_local.strftime('%d/%m/%Y %H:%M %Z')}", loc='right', fontsize=10)
 
         save_map_webp(fname)
 
