@@ -6,3 +6,5 @@ rioxarray
 requests
 scipy
 rasterio
+Pillow
+pytz
