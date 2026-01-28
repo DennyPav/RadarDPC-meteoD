@@ -3,9 +3,10 @@ import requests
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap, BoundaryNorm
+from matplotlib.ticker import FuncFormatter
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
-import geopandas as gpd  # <--- NUOVO IMPORT
+import geopandas as gpd
 import rioxarray
 from datetime import datetime
 import pytz
@@ -15,9 +16,11 @@ OUTDIR = "output"
 API_BASE = "https://radar-api.protezionecivile.it"
 TZ_ROME = pytz.timezone('Europe/Rome')
 
-# Costruiamo il path assoluto per sicurezza
+# Costruiamo il path assoluto
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SHP_PATH = os.path.join(SCRIPT_DIR, "Reg01012025_g_WGS84.shp")
+PROV_GEOJSON_PATH = os.path.join(SCRIPT_DIR, "province_bullet.geojson")
+CAPOLUOGHI_GEOJSON_PATH = os.path.join(SCRIPT_DIR, "capoluoghi_bullet.geojson")
 
 os.makedirs(OUTDIR, exist_ok=True)
 
@@ -39,6 +42,16 @@ boundaries_p_cum = [0,1,5,10,15,20,30,40,50,75,100,125,150,200,250,300,400,500,6
 cmap_p_cum = ListedColormap(colors_p_cum)
 cmap_p_cum.set_under("none")
 norm_p_cum = BoundaryNorm(boundaries_p_cum, cmap_p_cum.N, clip=False)
+
+# --- FORMATTER CUSTOM PER LA COLORBAR SRI ---
+def sri_fmt(x, pos):
+    """
+    Se x è 0.1 o 0.5 mostra il decimale.
+    Altrimenti arrotonda all'intero (es. 1.0 -> 1).
+    """
+    if np.isclose(x, 0.1) or np.isclose(x, 0.5):
+        return f"{x:.1f}"
+    return f"{x:.0f}"
 
 # --- FUNZIONI API ---
 
@@ -74,7 +87,7 @@ def download_product(product_type, epoch_ms, filename):
         print(f"[DL] Errore download {product_type}: {e}")
         return False
 
-# --- UTILITY ---
+# --- UTILITY MAPPA ---
 
 def get_formatted_filename(prefix, epoch_ms):
     dt_utc = datetime.fromtimestamp(epoch_ms / 1000.0, pytz.utc)
@@ -83,31 +96,59 @@ def get_formatted_filename(prefix, epoch_ms):
     return f"{prefix}_{time_str}.webp", dt_local
 
 def setup_map():
-    """Configura la mappa con Geopandas per lo shapefile"""
+    """Configura la mappa: confini, regioni, province e capoluoghi"""
     fig = plt.figure(figsize=(10, 11))
     ax = plt.axes(projection=ccrs.PlateCarree())
     ax.set_extent([6, 19, 35, 47.5], crs=ccrs.PlateCarree())
     
-    # 1. Confini Base (Costa e Stati) - ZORDER 20
+    # 1. Base geografica
     ax.add_feature(cfeature.COASTLINE.with_scale('10m'), linewidth=1.0, zorder=20)
     ax.add_feature(cfeature.BORDERS.with_scale('10m'), linestyle='-', linewidth=1.0, zorder=20)
     
-    # 2. CARICAMENTO SHAPEFILE CON GEOPANDAS
-    print("🗺️ Caricamento shapefile...")
-    try:
-        # Legge il file, esplode i multipoligoni e converte in WGS84 (EPSG:4326)
-        reg_df = gpd.read_file(SHP_PATH).explode(index_parts=False).to_crs(epsg=4326)
-        regions_geom = reg_df.geometry
-        
-        # Aggiunge le geometrie alla mappa
-        # ZORDER=25 per stare SOPRA la pioggia (che ha zorder=10)
-        # Facecolor='none' per trasparenza interna
-        # Edgecolor='black' e Linewidth=1.2 per visibilità
-        ax.add_geometries(regions_geom, crs=ccrs.PlateCarree(),
-                          facecolor='none', edgecolor='black', linewidth=0.5, zorder=25)
-        print("✅ Shapefile caricato e aggiunto.")
-    except Exception as e:
-        print(f"❌ Errore caricamento shapefile: {e}")
+    # 2. Shapefile Regioni
+    if os.path.exists(SHP_PATH):
+        try:
+            reg_df = gpd.read_file(SHP_PATH).explode(index_parts=False).to_crs(epsg=4326)
+            ax.add_geometries(reg_df.geometry, crs=ccrs.PlateCarree(),
+                              facecolor='none', edgecolor='black', linewidth=0.5, zorder=25)
+        except Exception as e:
+            print(f"❌ Errore Regioni: {e}")
+    else:
+        print(f"⚠️ Shapefile Regioni non trovato: {SHP_PATH}")
+
+    # CONFIGURAZIONE COMUNE PUNTI
+    point_size = 2
+
+    # 3. GeoJSON Province (Nero)
+    if os.path.exists(PROV_GEOJSON_PATH):
+        try:
+            prov_df = gpd.read_file(PROV_GEOJSON_PATH)
+            if prov_df.crs is not None and prov_df.crs.to_string() != "EPSG:4326":
+                prov_df = prov_df.to_crs(epsg=4326)
+            
+            # c='black', s=2.2, linewidth=0.2, edgecolors='white'
+            ax.scatter(prov_df.geometry.x, prov_df.geometry.y, 
+                       c='black', s=point_size, 
+                       transform=ccrs.PlateCarree(), zorder=30)
+            print("📍 Province caricate.")
+        except Exception as e:
+            print(f"❌ Errore Province: {e}")
+
+    # 4. GeoJSON Capoluoghi (Bordeaux #800000)
+    if os.path.exists(CAPOLUOGHI_GEOJSON_PATH):
+        try:
+            cap_df = gpd.read_file(CAPOLUOGHI_GEOJSON_PATH)
+            if cap_df.crs is not None and cap_df.crs.to_string() != "EPSG:4326":
+                cap_df = cap_df.to_crs(epsg=4326)
+            
+            # c='#800000', s=2.2, linewidth=0.2, edgecolors='white'
+            # zorder=35 (sopra le province normali)
+            ax.scatter(cap_df.geometry.x, cap_df.geometry.y, 
+                       c='red', s=point_size, 
+                       transform=ccrs.PlateCarree(), zorder=35)
+            print("📍 Capoluoghi caricati.")
+        except Exception as e:
+            print(f"❌ Errore Capoluoghi: {e}")
 
     # Griglia
     gl = ax.gridlines(draw_labels=True, linestyle='--', alpha=0.3, zorder=30)
@@ -124,17 +165,14 @@ def save_map_webp(filename):
 # --- PLOTTING ---
 
 def plot_sri():
-    """Solo SRI (Precipitazione istantanea)"""
+    """SRI con Colorbar formattata"""
     print("--- Elaborazione SRI ---")
     sri_time = get_last_product_time("SRI")
     if not sri_time: return
 
     fname, dt_local = get_formatted_filename(f"{OUTDIR}/RADAR_SRI", sri_time)
     
-    if os.path.exists(fname):
-        print(f"[SKIP] {fname} esiste.")
-        return
-
+    # Sovrascrittura sempre attiva
     f_sri = "temp_sri.tif"
     if not download_product("SRI", sri_time, f_sri): return
 
@@ -145,15 +183,15 @@ def plot_sri():
         crs_sri = ccrs.Projection(da_sri.rio.crs)
         da_sri = da_sri.where(da_sri >= 0.1)
 
-        # ZORDER=10, ALPHA=0.75
         cf = ax.pcolormesh(da_sri.x, da_sri.y, da_sri, transform=crs_sri,
                            cmap=cmap_p, norm=norm_p, zorder=10, alpha=0.75)
 
         cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.04, aspect=30, extend='max', shrink=0.75)
         cbar.set_label("Precipitazione Istantanea (mm/h)")
         cbar.set_ticks(boundaries_p)
+        cbar.ax.xaxis.set_major_formatter(FuncFormatter(sri_fmt))
 
-        plt.title(f"Radar SRI (Istantanea)", loc='left', fontsize=12, fontweight='bold')
+        plt.title(f"Precipitazione Radar (SRI)", loc='left', fontsize=12, fontweight='bold')
         plt.title(f"rete radar DPC - Valid: {dt_local.strftime('%d/%m/%Y %H:%M %Z')}", loc='right', fontsize=10)
 
         save_map_webp(fname)
@@ -171,10 +209,6 @@ def plot_cum24():
 
     fname, dt_local = get_formatted_filename(f"{OUTDIR}/RADAR_CUM24", cum_time)
     
-    if os.path.exists(fname):
-        print(f"[SKIP] {fname} esiste.")
-        return
-
     f_cum = "temp_cum24.tif"
     if not download_product("CUM24", cum_time, f_cum): return
 
@@ -183,12 +217,11 @@ def plot_cum24():
         da_cum = rioxarray.open_rasterio(f_cum, masked=True).squeeze()
         da_cum = da_cum.where(da_cum >= 1)
 
-        # ZORDER=10, ALPHA=0.75
         cf = ax.pcolormesh(da_cum.x, da_cum.y, da_cum, transform=ccrs.PlateCarree(),
                            cmap=cmap_p_cum, norm=norm_p_cum, zorder=10, alpha=0.75)
 
-        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.04, aspect=30, extend='max', shrink=0.75)
-        cbar.set_label("Precipitazione 24h (mm)")
+        cbar = plt.colorbar(cf, ax=ax, orientation='horizontal', pad=0.04, aspect=30, extend='max', shrink=0.9)
+        cbar.set_label("Precipitazione Totale (mm)")
         cbar.set_ticks(boundaries_p_cum)
 
         plt.title(f"Precipitazione Cumulata 24h", loc='left', fontsize=12, fontweight='bold')
